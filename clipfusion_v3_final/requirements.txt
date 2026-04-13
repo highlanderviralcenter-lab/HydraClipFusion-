@@ -1,0 +1,22 @@
+# ClipFusion Viral Pro v3.0 - Requirements
+# Python 3.9+ compatível
+# Otimizado para i5-6200U / Intel HD 520
+
+# Transcrição
+faster-whisper>=0.10.0
+
+# Processamento de vídeo (V1 + SignalCut)
+opencv-python>=4.8.0
+numpy>=1.24.0
+pillow>=10.0.0
+
+# Áudio (librosa do V1)
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# Utilidades
+pyyaml>=6.0.1
+requests>=2.31.0
+
+# GUI
+# python3-tk (instalar via apt: sudo apt install python3-tk)
