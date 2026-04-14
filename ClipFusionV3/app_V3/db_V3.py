@@ -1,158 +1,222 @@
+#!/usr/bin/env python3
+"""
+Banco SQLite do ClipFusionV3.
+Compatível com a GUI atual.
+"""
+from __future__ import annotations
+
 import json
-import os
 import sqlite3
-from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-DB_PATH = Path(os.path.expanduser("~")) / ".clipfusion" / "clipfusion.db"
+BASE_DIR = Path(__file__).resolve().parent
+DB_DIR = BASE_DIR / "output"
+DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DB_DIR / "clipfusion_v3.db"
 
 
-def _connect():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+def _conn():
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-@contextmanager
-def get_db():
-    conn = _connect()
-    try:
-        yield conn
-    finally:
-        conn.close()
+def init_db() -> None:
+    conn = _conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS projects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        video_path TEXT NOT NULL,
+        status TEXT DEFAULT 'created',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS transcripts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        full_text TEXT,
+        segments_json TEXT,
+        quality REAL DEFAULT 0.0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS candidates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        start_time REAL NOT NULL,
+        end_time REAL NOT NULL,
+        title TEXT,
+        hook TEXT,
+        reason TEXT,
+        raw_json TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS cuts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        candidate_id INTEGER,
+        output_json TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    conn.commit()
+    conn.close()
 
 
-def init_db():
-    with get_db() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                video_path TEXT NOT NULL,
-                language TEXT DEFAULT 'pt',
-                status TEXT DEFAULT 'created',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS transcripts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL,
-                full_text TEXT,
-                segments_json TEXT,
-                quality_score REAL DEFAULT 0.0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS candidates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL,
-                transcript_id INTEGER NOT NULL,
-                start_time REAL NOT NULL,
-                end_time REAL NOT NULL,
-                text TEXT NOT NULL,
-                hook_strength REAL DEFAULT 0.0,
-                retention_score REAL DEFAULT 0.0,
-                moment_strength REAL DEFAULT 0.0,
-                shareability REAL DEFAULT 0.0,
-                platform_fit_tiktok REAL DEFAULT 0.0,
-                platform_fit_reels REAL DEFAULT 0.0,
-                platform_fit_shorts REAL DEFAULT 0.0,
-                combined_score REAL DEFAULT 0.0,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                FOREIGN KEY (transcript_id) REFERENCES transcripts(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS cuts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL,
-                candidate_id INTEGER,
-                start_time REAL NOT NULL,
-                end_time REAL NOT NULL,
-                title TEXT,
-                hook TEXT,
-                archetype TEXT,
-                platforms TEXT,
-                protection_level TEXT DEFAULT 'none',
-                output_paths TEXT,
-                viral_score REAL DEFAULT 0.0,
-                decision TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE SET NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS performances (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cut_id INTEGER NOT NULL,
-                platform TEXT NOT NULL,
-                views INTEGER DEFAULT 0,
-                likes INTEGER DEFAULT 0,
-                shares INTEGER DEFAULT 0,
-                comments INTEGER DEFAULT 0,
-                posted_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (cut_id) REFERENCES cuts(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS learning_weights (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                module TEXT NOT NULL,
-                subkey TEXT,
-                weight REAL NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            """
-        )
-        conn.commit()
+def create_project(name: str, video_path: str) -> int:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO projects (name, video_path, status) VALUES (?, ?, ?)",
+        (name, video_path, "created"),
+    )
+    conn.commit()
+    pid = cur.lastrowid
+    conn.close()
+    return pid
 
 
-def normalize_scores(payload: dict) -> dict:
-    payload = dict(payload or {})
-    # mapeamentos legados -> schema canônico
-    if "retention_score" not in payload and "retencao_estimada" in payload:
-        payload["retention_score"] = payload.get("retencao_estimada", 0.0)
-    if "moment_strength" not in payload and "comentabilidade" in payload:
-        payload["moment_strength"] = payload.get("comentabilidade", 0.0)
-    return payload
+def list_projects() -> List[Dict[str, Any]]:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM projects ORDER BY id DESC")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
 
 
-def save_candidate(project_id, transcript_id, start, end, text, scores=None):
-    s = normalize_scores(scores or {})
-    with get_db() as conn:
-        cur = conn.execute(
+def get_project(project_id: int) -> Optional[Dict[str, Any]]:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_project_status(project_id: int, status: str) -> None:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE projects SET status = ? WHERE id = ?",
+        (status, project_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_transcription(project_id: int, full_text: str, segments: List[Dict[str, Any]], quality: float) -> int:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO transcripts (project_id, full_text, segments_json, quality) VALUES (?, ?, ?, ?)",
+        (project_id, full_text, json.dumps(segments, ensure_ascii=False), quality),
+    )
+    conn.commit()
+    tid = cur.lastrowid
+    conn.close()
+    return tid
+
+
+def get_transcription(project_id: int) -> Optional[Dict[str, Any]]:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM transcripts WHERE project_id = ? ORDER BY id DESC LIMIT 1",
+        (project_id,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    data = dict(row)
+    data["segments"] = json.loads(data["segments_json"]) if data.get("segments_json") else []
+    return data
+
+
+def save_cuts(project_id: int, cuts: List[Dict[str, Any]]) -> None:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM candidates WHERE project_id = ?", (project_id,))
+
+    for cut in cuts:
+        cur.execute(
             """
             INSERT INTO candidates (
-                project_id, transcript_id, start_time, end_time, text,
-                hook_strength, retention_score, moment_strength, shareability,
-                platform_fit_tiktok, platform_fit_reels, platform_fit_shorts, combined_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                project_id, start_time, end_time, title, hook, reason, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                project_id, transcript_id, start, end, text,
-                float(s.get("hook", s.get("hook_strength", 0.0)) or 0.0),
-                float(s.get("retention_score", 0.0) or 0.0),
-                float(s.get("moment_strength", 0.0) or 0.0),
-                float(s.get("shareability", 0.0) or 0.0),
-                float(s.get("platform_fit_tiktok", 0.0) or 0.0),
-                float(s.get("platform_fit_reels", 0.0) or 0.0),
-                float(s.get("platform_fit_shorts", 0.0) or 0.0),
-                float(s.get("combined", s.get("combined_score", 0.0)) or 0.0),
+                project_id,
+                float(cut.get("start", 0.0)),
+                float(cut.get("end", 0.0)),
+                cut.get("title", "Corte"),
+                cut.get("hook", ""),
+                cut.get("reason", ""),
+                json.dumps(cut, ensure_ascii=False),
             ),
         )
-        conn.commit()
-        return cur.lastrowid
+
+    conn.commit()
+    conn.close()
 
 
-def to_json(obj):
-    return json.dumps(obj, ensure_ascii=False)
+def get_candidates(project_id: int) -> List[Dict[str, Any]]:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM candidates WHERE project_id = ? ORDER BY id ASC",
+        (project_id,),
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
 
 
-def from_json(raw, fallback):
-    if not raw:
-        return fallback
-    return json.loads(raw)
+def update_cut_output(candidate_id: int, output_paths: Any) -> None:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO cuts (project_id, candidate_id, output_json) VALUES ((SELECT project_id FROM candidates WHERE id = ?), ?, ?)",
+        (candidate_id, candidate_id, json.dumps(output_paths, ensure_ascii=False)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_cuts(project_id: int) -> List[Dict[str, Any]]:
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM cuts WHERE project_id = ? ORDER BY id DESC",
+        (project_id,),
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+init_db()
