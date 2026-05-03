@@ -57,6 +57,8 @@ class FastWhisperTranscriber:
                 beam_size=1,
                 best_of=1,
                 condition_on_previous_text=False,
+                word_timestamps=True,
+                vad_parameters={"min_silence_duration_ms": 300},
             )
 
             segments = []

@@ -121,12 +121,12 @@ Analise agora:"""
 def parse_ai_response(text: str) -> list:
     text = re.sub(r"```json\s*|```\s*", "", text.strip())
     blob = None
-    obj_match = re.search(r"\{[\s\S]*\}", text)
     arr_match = re.search(r"\[[\s\S]*\]", text)
-    if obj_match:
-        blob = obj_match.group()
-    elif arr_match:
+    obj_match = re.search(r"\{[\s\S]*\}", text)
+    if arr_match:
         blob = arr_match.group()
+    elif obj_match:
+        blob = obj_match.group()
     if not blob:
         raise ValueError("Nenhum JSON encontrado.")
 
