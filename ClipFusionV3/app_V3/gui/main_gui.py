@@ -272,7 +272,7 @@ class ClipFusionApp:
                 full_text = "\n".join(lines)
                 quality = 0.85
             else:
-                transcriber = FastFastWhisperTranscriber(
+                transcriber = FastWhisperTranscriber(
                     model_size=self.v_whisper.get(),
                     device="cpu",
                     compute_type="int8",

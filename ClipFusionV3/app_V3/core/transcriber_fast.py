@@ -53,7 +53,7 @@ class FastWhisperTranscriber:
             segments_iter, info = model.transcribe(
                 wav_path,
                 language=language,
-                vad_filter=True,
+                vad_filter=False,
                 beam_size=1,
                 best_of=1,
                 condition_on_previous_text=False,
