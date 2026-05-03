@@ -1,6 +1,20 @@
-
-# ambientes virtuais
-.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 venv/
-**/.venv/
-**/venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+.DS_Store
+Thumbs.db
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+output/
+*.db
+.env
